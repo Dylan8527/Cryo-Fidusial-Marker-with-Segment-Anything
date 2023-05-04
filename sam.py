@@ -2,7 +2,7 @@
 Author: Dylan8527 vvm8933@gmail.com
 Date: 2023-05-03 21:30:08
 LastEditors: Dylan8527 vvm8933@gmail.com
-LastEditTime: 2023-05-04 00:18:51
+LastEditTime: 2023-05-04 17:27:40
 FilePath: \Cryo-Fidusial-Marker-with-Segment-Anything\sam.py
 Description: Use sam to generate mask from points
 
@@ -11,16 +11,24 @@ Copyright (c) 2023 by ${git_name_email}, All Rights Reserved.
 import cv2
 import time
 import warnings
+from functools import reduce
 import numpy as np
 from draw import *
-from segment_anything import sam_model_registry, SamPredictor
+from file import *
+from segment_anything import sam_model_registry, SamPredictor, SamAutomaticMaskGenerator
 
 ADD_POINT_STATE = 0
 GENERATE_MASK_STATE = 1
 MODEL_PATH = 'Pretrained_models\\sam_vit_h_4b8939.pth'
 # IMAGE_PATH = 'Figures\\average_micrograph.png'
-IMAGE_PATH = 'Figures\\dog.jpg'
+# IMAGE_PATH = 'Figures\\dog.jpg'
+IMAGE_PATH = None
+SAVE_PATH = None
 WINDOW_NAME = "Sam Mask Generator"
+
+if IMAGE_PATH is None:
+    IMAGE_PATH = select_image_path()
+    
 
 def generate_mask(point_coords, point_labels, mask_input, unmasked_image, predictor):
     '''
@@ -40,6 +48,21 @@ def generate_mask(point_coords, point_labels, mask_input, unmasked_image, predic
         multimask_output=True
     )
     return masks, scores, logits
+
+def merge_masks_scores_mask_inputs(all_masks, all_scores, all_mask_inputs):
+    '''
+    :param all_masks:       (N, H, W) array of masks
+    :param all_scores:      (N, ) array of scores
+    :param all_mask_inputs: (N, H, W) array of mask inputs
+    :return:                 merged_mask, merged_score, merged_mask_input
+    '''
+    all_masks = [reduce(lambda x, y: np.logical_or(x, y), all_masks)]
+    all_scores = [1.14514]
+    all_mask_inputs = [reduce(lambda x, y: np.logical_or(x, y), all_mask_inputs)]
+
+    return all_masks, all_scores, all_mask_inputs
+    
+    
 
 def mouse_callback(event, x, y, flags, param):
     global point_coords, point_labels, display_state
@@ -69,6 +92,7 @@ def reset():
 # 1. Load the model1
 sam = sam_model_registry["vit_h"](checkpoint=MODEL_PATH).cuda() # cuda:0 3090 actually
 predictor = SamPredictor(sam)
+mask_generator = SamAutomaticMaskGenerator(sam)
 
 # 2. Load the image
 unmasked_image = cv2.imread(IMAGE_PATH)
@@ -126,23 +150,28 @@ while True:
 
         if len(point_coords) > 0:
             np_point_coords, np_point_labels = np.array(point_coords), np.array(point_labels)
-            masks, scores, logits = generate_mask(
+            all_masks, all_scores, all_mask_inputs = generate_mask(
                 point_coords=np_point_coords,
                 point_labels=np_point_labels,
                 mask_input=mask_input,
                 unmasked_image=unmasked_image,
                 predictor=predictor
             )
-            
-            point_coords = []
-            point_labels = []
-            
-            # Since Sam generate multiple masks, we need to choose the best one manually
-            manually_chosen_best_mask_idx = np.argmax(scores)
 
-            all_masks = masks
-            all_mask_inputs = logits
-            all_scores = scores
+        else:
+            warnings.warn("Since no points are added, generate masks for an entire image.")
+            masks_list = mask_generator.generate(unmasked_image) # each element is a dict, we get the segmentataion in dict
+            all_masks  = [m["segmentation"] for m in masks_list]
+            all_scores = [m["predicted_iou"] for m in masks_list]
+            all_mask_inputs = [m["segmentation"] for m in masks_list]
+
+
+        # Since Sam generate multiple masks, we need to choose the best one manually
+        manually_chosen_best_mask_idx = np.argmax(all_scores)
+
+        point_coords = []
+        point_labels = []
+            
 
     elif key == ord('a'):
         if manually_chosen_best_mask_idx != -1:
@@ -157,6 +186,19 @@ while True:
     elif key == ord('q') and len(point_coords) > 0:
         point_coords.pop()
         point_labels.pop()
+
+    elif key == ord('m'):
+        if manually_chosen_best_mask_idx != -1 and len(all_masks) > 1:
+            all_masks, all_scores, all_mask_inputs = merge_masks_scores_mask_inputs(
+                all_masks=all_masks[1:],
+                all_scores=all_scores[1:],
+                all_mask_inputs=all_mask_inputs[1:]
+            )
+            manually_chosen_best_mask_idx = 0
+            
+    elif key == ord('s'):
+        pass
+
         
 
     
