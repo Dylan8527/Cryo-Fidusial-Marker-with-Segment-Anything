@@ -40,3 +40,40 @@ def draw_single_mask(display_image, mask, color, alpha=0.5):
     display_image = display_image.astype(np.uint8)
 
     return display_image
+
+import numpy as np
+from functools import reduce
+
+def generate_mask(point_coords, point_labels, mask_input, unmasked_image, predictor):
+    '''
+    :param points:      (N, 2) array of points
+    :param labels:      (N, ) array of labels
+    :param logit_mask:  (H, W) array of logits
+    :param image:       (H, W, 3) array of image
+    :param predictor:   SamPredictor
+    :return:            masks, scores, logits
+    '''
+
+    predictor.set_image(unmasked_image)
+    masks, scores, logits = predictor.predict(
+        point_coords=point_coords,
+        point_labels=point_labels,
+        mask_input=mask_input[None, ...] if mask_input is not None else None,
+        multimask_output=True
+    )
+    return masks, scores, logits
+
+def merge_masks_scores_mask_inputs(all_masks, all_scores, all_mask_inputs):
+    '''
+    :param all_masks:       (N, H, W) array of masks
+    :param all_scores:      (N, ) array of scores
+    :param all_mask_inputs: (N, H, W) array of mask inputs
+    :param points:          (M, 2) array of points
+    :param labels:          (M, ) array of labels
+    :return:                 merged_mask, merged_score, merged_mask_input
+    '''
+    all_masks = [reduce(lambda x, y: np.logical_or(x, y), all_masks)]
+    all_scores = [1.14514]
+    all_mask_inputs = [reduce(lambda x, y: np.logical_or(x, y), all_mask_inputs)]
+
+    return all_masks, all_scores, all_mask_inputs
