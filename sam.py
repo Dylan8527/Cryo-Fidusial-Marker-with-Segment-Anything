@@ -2,7 +2,7 @@
 Author: Dylan8527 vvm8933@gmail.com
 Date: 2023-05-03 21:30:08
 LastEditors: Dylan8527 vvm8933@gmail.com
-LastEditTime: 2023-05-06 18:08:00
+LastEditTime: 2023-05-06 18:23:20
 FilePath: \Cryo-Fidusial-Marker-with-Segment-Anything\sam.py
 Description: Use sam to generate mask from points
 
@@ -80,6 +80,7 @@ class MaskGenerator:
                 mask_input=self.mask_input[None, ...] if self.mask_input is not None else None,
                 multimask_output=True
             )
+
         # Since Sam generate multiple masks, we need to choose the best one manually
         MaskGen.autoset_best_mask()
         MaskGen.reset_point() 
@@ -93,7 +94,7 @@ class MaskGenerator:
         masks_list = mask_generator.generate(unmasked_image) # each element is a dict, we get the segmentataion in dict
         self.all_masks  = [m["segmentation"] for m in masks_list]
         self.all_scores = [m["predicted_iou"] for m in masks_list]
-        self.all_mask_inputs = [m["segmentation"] for m in masks_list]
+        self.all_mask_inputs = None
 
     def autoset_best_mask(self):
         if self.all_scores is not None:
@@ -120,14 +121,15 @@ class MaskGenerator:
             self.point_labels.pop()
 
     def automerge_all_masks(self):
-        if len(self.all_masks) > 1:
+        if self.all_masks is not None and len(self.all_masks) > 1:
             self.all_masks, self.all_scores, self.all_mask_inputs = merge_masks_scores_mask_inputs(
                 all_masks=self.all_masks[1:],
                 all_scores=self.all_scores[1:],
-                all_mask_inputs=self.all_mask_inputs[1:]
+                all_mask_inputs=self.all_mask_inputs[1:] if self.all_mask_inputs is not None else None
             )
             self.manually_chosen_best_mask_idx = 0
-            # self.mask_input = self.all_masks[0]
+            print(self.all_masks[0].shape)
+            self.mask_input = self.all_masks[0]
 
     def mouse_callback(self, event, x, y, flags, param):
         # global point_coords, point_labels, display_state
