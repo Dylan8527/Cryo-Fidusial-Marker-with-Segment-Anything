@@ -22,3 +22,21 @@ def coco_encode_rle(uncompressed_rle):
     rle = mask_utils.frPyObjects(uncompressed_rle, h, w)
     rle["counts"] = rle["counts"].decode("utf-8")  # Necessary to serialize with json
     return rle
+
+def binmask2anns(masks, iou_predictions, point_coords):
+    fortran_masks = [np.asfortranarray(mask) for mask in masks]
+    rle = [mask_utils.encode(mask) for mask in fortran_masks]
+    
+    curr_anns = []
+    for i in range(len(rle)):
+        ann = {
+            'segmentation': rle[i],
+            'area': mask_utils.area(rle[i]),
+            'bbox': mask_utils.toBbox(rle[i]),
+            'predicted_iou': iou_predictions[i],
+            'point_coords': point_coords,
+            'stability_score': None,
+            'crop_box': None
+        }
+        curr_anns.append(ann)
+    return curr_anns

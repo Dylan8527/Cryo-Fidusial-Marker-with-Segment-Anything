@@ -2,7 +2,7 @@
 Author: Dylan8527 vvm8933@gmail.com
 Date: 2023-05-03 21:30:08
 LastEditors: Dylan8527 vvm8933@gmail.com
-LastEditTime: 2023-05-08 17:42:53
+LastEditTime: 2023-05-08 17:54:47
 FilePath: \Cryo-Fidusial-Marker-with-Segment-Anything\sam.py
 Description: Use sam to generate mask from points
 
@@ -82,7 +82,8 @@ class MaskGenerator:
                 mask_input=self.low_res_masks[self.display_mask_id][None, ...] if self.low_res_masks is not None else None,
                 multimask_output=True
             )
-            self.anns = self.binmask2anns(masks, iou_predictions)
+            self.anns = binmask2anns(masks, iou_predictions, self.point_coords)
+
 
         # Since Sam generate multiple masks, we need to choose the best one manually
         MaskGen.autoset_best_mask()
@@ -120,26 +121,6 @@ class MaskGenerator:
         if len(self.point_coords) > 0:
             self.point_coords.pop()
             self.point_labels.pop()
-
-    def binmask2anns(self, masks, iou_predictions):
-        fortran_masks = [np.asfortranarray(mask) for mask in masks]
-        rle = [mask_utils.encode(mask) for mask in fortran_masks]
-        
-        curr_anns = []
-        for i in range(len(rle)):
-            ann = {
-                'segmentation': rle[i],
-                'area': mask_utils.area(rle[i]),
-                'bbox': mask_utils.toBbox(rle[i]),
-                'predicted_iou': iou_predictions[i],
-                'point_coords': self.point_coords,
-                'stability_score': None,
-                'crop_box': None
-            }
-            curr_anns.append(ann)
-        return curr_anns
-
-
 
     def automerge_all_masks(self):
         # if self.anns is not None and len(self.anns) > 1:
