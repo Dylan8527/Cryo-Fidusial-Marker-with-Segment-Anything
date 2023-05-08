@@ -2,7 +2,7 @@
 Author: Dylan8527 vvm8933@gmail.com
 Date: 2023-05-03 21:30:08
 LastEditors: Dylan8527 vvm8933@gmail.com
-LastEditTime: 2023-05-06 18:23:20
+LastEditTime: 2023-05-08 17:42:53
 FilePath: \Cryo-Fidusial-Marker-with-Segment-Anything\sam.py
 Description: Use sam to generate mask from points
 
@@ -29,16 +29,18 @@ WINDOW_NAME = "Sam Mask Generator"
 
 if IMAGE_PATH is None:
     IMAGE_PATH = select_image_path()
-    
+
 class MaskGenerator:
     def __init__(self):
         self.point_coords = []
         self.point_labels = []
         self.mask_input = None
         self.display_state = ADD_POINT_STATE
-        self.all_masks = None
-        self.all_mask_inputs = None  
-        self.all_scores = None
+        # self.all_masks = None
+        # self.all_mask_inputs = None  
+        # self.all_scores = None
+        self.anns = None # annotations
+        self.low_res_masks = None
         self.manually_chosen_best_mask_idx = -1
     
         self.random_rgb_color1, self.random_rgb_color2 = np.random.randint(0, 255, size=(3, )), np.random.randint(0, 255, size=(3, ))
@@ -48,10 +50,12 @@ class MaskGenerator:
         self.point_labels = []
         self.mask_input = None
         self.display_state = ADD_POINT_STATE
-        self.all_masks = None
-        self.all_mask_inputs = None  
-        self.all_scores = None
-        self.manually_chosen_best_mask_idx = -1
+        # self.all_masks = None
+        # self.all_mask_inputs = None  
+        # self.all_scores = None
+        self.low_res_masks = None
+        self.anns = None # annotations
+        self.display_mask_id = -1
         
     def smooth_transition(self):
         ratio = (round(time.time() * 1000 )) % 1000 / 1000
@@ -60,8 +64,6 @@ class MaskGenerator:
 
     def flip_state(self):
         self.display_state = 1 - self.display_state
-
-
 
     def generate_mask(self, unmasked_image, predictor, mask_generator):
         '''
@@ -74,12 +76,13 @@ class MaskGenerator:
         else:
             predictor.set_image(unmasked_image)
             np_point_coords, np_point_labels = np.array(self.point_coords), np.array(self.point_labels)
-            self.all_masks, self.all_scores, self.all_mask_inputs = predictor.predict(
+            masks, iou_predictions, self.low_res_masks = predictor.predict(
                 point_coords=np_point_coords,
                 point_labels=np_point_labels,
-                mask_input=self.mask_input[None, ...] if self.mask_input is not None else None,
+                mask_input=self.low_res_masks[self.display_mask_id][None, ...] if self.low_res_masks is not None else None,
                 multimask_output=True
             )
+            self.anns = self.binmask2anns(masks, iou_predictions)
 
         # Since Sam generate multiple masks, we need to choose the best one manually
         MaskGen.autoset_best_mask()
@@ -91,45 +94,64 @@ class MaskGenerator:
         :param mask_generator:       SamAutomaticMaskGenerator
         '''
         warnings.warn("Since no points are added, generate masks for an entire image.")
-        masks_list = mask_generator.generate(unmasked_image) # each element is a dict, we get the segmentataion in dict
-        self.all_masks  = [m["segmentation"] for m in masks_list]
-        self.all_scores = [m["predicted_iou"] for m in masks_list]
-        self.all_mask_inputs = None
+        self.anns = mask_generator.generate(unmasked_image) # each element is a dict, we get the segmentataion in dict
+        self.low_res_masks = None
 
     def autoset_best_mask(self):
-        if self.all_scores is not None:
-            self.manually_chosen_best_mask_idx = np.argmax(self.all_scores)
+        if self.anns is not None:
+            self.display_mask_id = np.argmax(np.array([ann['predicted_iou'] for ann in self.anns]))
 
     def reset_point(self):
         self.point_coords = []
         self.point_labels = []
 
     def have_mask(self):
-        return self.all_masks is not None
+        return self.anns is not None
 
     def move_to_left_mask(self):
         if self.have_mask():
-            self.manually_chosen_best_mask_idx = (self.manually_chosen_best_mask_idx - 1) % len(self.all_masks)
+            self.display_mask_id = (self.display_mask_id - 1) % len(self.anns)
 
     def move_to_right_mask(self):
         if self.have_mask():
-            self.manually_chosen_best_mask_idx = (self.manually_chosen_best_mask_idx + 1) % len(self.all_masks)
+            self.display_mask_id = (self.display_mask_id + 1) % len(self.anns)
 
     def pop_point(self):
         if len(self.point_coords) > 0:
             self.point_coords.pop()
             self.point_labels.pop()
 
+    def binmask2anns(self, masks, iou_predictions):
+        fortran_masks = [np.asfortranarray(mask) for mask in masks]
+        rle = [mask_utils.encode(mask) for mask in fortran_masks]
+        
+        curr_anns = []
+        for i in range(len(rle)):
+            ann = {
+                'segmentation': rle[i],
+                'area': mask_utils.area(rle[i]),
+                'bbox': mask_utils.toBbox(rle[i]),
+                'predicted_iou': iou_predictions[i],
+                'point_coords': self.point_coords,
+                'stability_score': None,
+                'crop_box': None
+            }
+            curr_anns.append(ann)
+        return curr_anns
+
+
+
     def automerge_all_masks(self):
-        if self.all_masks is not None and len(self.all_masks) > 1:
-            self.all_masks, self.all_scores, self.all_mask_inputs = merge_masks_scores_mask_inputs(
-                all_masks=self.all_masks[1:],
-                all_scores=self.all_scores[1:],
-                all_mask_inputs=self.all_mask_inputs[1:] if self.all_mask_inputs is not None else None
-            )
-            self.manually_chosen_best_mask_idx = 0
-            print(self.all_masks[0].shape)
-            self.mask_input = self.all_masks[0]
+        # if self.anns is not None and len(self.anns) > 1:
+        #     self.all_masks, self.all_scores, self.all_mask_inputs = merge_masks_scores_mask_inputs(
+        #         all_masks=self.all_masks[1:],
+        #         all_scores=self.all_scores[1:],
+        #         all_mask_inputs=self.low_res_masks[1:] if self.low_res_masks is not None else None
+        #     )
+        #     self.manually_chosen_best_mask_idx = 0
+        #     print(self.all_masks[0].shape)
+        #     self.mask_input = self.all_masks[0]
+        pass # Actually unuseful....
 
     def mouse_callback(self, event, x, y, flags, param):
         # global point_coords, point_labels, display_state
@@ -141,10 +163,22 @@ class MaskGenerator:
             self.point_coords.append([x, y])
             self.point_labels.append(0)
 
+    def get_display_mask(self):
+        assert self.have_mask()
+
+        ann = self.anns[self.display_mask_id]
+        binmask = mask_utils.decode(ann['segmentation'])
+        return binmask
+        
+    def get_display_score(self):
+        assert self.have_mask()
+
+        return self.anns[self.display_mask_id]['predicted_iou']
+
 # 1. Load the model1
 sam = sam_model_registry["vit_h"](checkpoint=MODEL_PATH).cuda() # cuda:0 3090 actually
 predictor = SamPredictor(sam)
-mask_generator = SamAutomaticMaskGenerator(sam)
+mask_generator = SamAutomaticMaskGenerator(sam, output_mode='coco_rle')
 
 # 2. Load the image
 unmasked_image = cv2.imread(IMAGE_PATH)
@@ -169,14 +203,14 @@ while True:
     if not MaskGen.have_mask() or MaskGen.display_state == ADD_POINT_STATE:
         helper_info = 'Fore: Left Clk | Back: Right Clk | Gen Mask: Space | Reset: R'
     else:
-        helper_info = f'Total Masks: {len(MaskGen.all_masks)} | Current Mask Idx: {MaskGen.manually_chosen_best_mask_idx} | Score {MaskGen.all_scores[MaskGen.manually_chosen_best_mask_idx]:.4f}'
+        helper_info = f'Total Masks: {len(MaskGen.anns)} | Current Mask Idx: {MaskGen.display_mask_id} | Score {MaskGen.get_display_score():.4f}'
     
     cv2.putText(display_image, helper_info, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
     
     display_image = draw_circles(display_image, MaskGen.point_coords, MaskGen.point_labels) # Draw points
 
     if MaskGen.have_mask(): 
-        display_image = draw_single_mask(display_image, MaskGen.all_masks[MaskGen.manually_chosen_best_mask_idx], MaskGen.smooth_transition(), alpha=0.5) # Draw single mask
+        display_image = draw_single_mask(display_image, MaskGen.get_display_mask(), MaskGen.smooth_transition(), alpha=0.5) # Draw single mask
 
     cv2.imshow(WINDOW_NAME, display_image)
     key = cv2.waitKey(1)
