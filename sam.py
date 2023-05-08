@@ -175,6 +175,11 @@ class MaskGenerator:
 
         return self.anns[self.display_mask_id]['predicted_iou']
 
+    def remove_current_display_mask(self):
+        if self.have_mask():
+            self.anns.pop(self.display_mask_id)
+            self.display_mask_id = self.display_mask_id % len(self.anns)
+
 # 1. Load the model1
 sam = sam_model_registry["vit_h"](checkpoint=MODEL_PATH).cuda() # cuda:0 3090 actually
 predictor = SamPredictor(sam)
@@ -235,7 +240,8 @@ while True:
         MaskGen.pop_point()
 
     elif key == ord('m'):
-        MaskGen.automerge_all_masks()
+        # MaskGen.automerge_all_masks()
+        MaskGen.remove_current_display_mask()
             
     elif key == ord('s'):
         pass
